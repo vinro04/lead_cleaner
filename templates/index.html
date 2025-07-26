@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lead Cleaner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: border-color 0.3s;
+            cursor: pointer;
+        }
+        
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        
+        .upload-text {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .upload-subtext {
+            font-size: 14px;
+            color: #999;
+        }
+        
+        .progress {
+            display: none;
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            text-align: center;
+            color: #666;
+            margin: 10px 0;
+            font-size: 14px;
+            font-style: italic;
+        }
+        
+        .file-ready {
+            background: #e8f5e8;
+            border: 2px solid #28a745;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .file-ready h3 {
+            color: #155724;
+            margin-bottom: 10px;
+        }
+        
+        .file-ready p {
+            color: #155724;
+            margin-bottom: 20px;
+        }
+        
+        .run-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .run-btn:hover {
+            background: #0056b3;
+        }
+        
+        .run-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .summary {
+            display: none;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .summary-item {
+            display: inline-block;
+            margin: 10px 20px 10px 0;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        .flag-0 { background: #d4edda; color: #155724; }
+        .flag-1 { background: #fff3cd; color: #856404; }
+        .flag-2 { background: #f8d7da; color: #721c24; }
+        
+        .results {
+            display: none;
+            margin-top: 30px;
+        }
+        
+        .record {
+            border: 1px solid #ddd;
+            margin: 10px 0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .record-header {
+            padding: 15px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .record-content {
+            display: none;
+            padding: 15px;
+            background: #f9f9f9;
+            border-top: 1px solid #ddd;
+        }
+        
+        .field-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .field {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .field label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        
+        .field input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .download-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        
+        .download-btn:hover {
+            background: #218838;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lead Data Cleaner</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-text">Drop your CSV file here or click to browse</div>
+            <div class="upload-subtext">Maximum file size: 16MB</div>
+            <input type="file" id="fileInput" accept=".csv" style="display: none;">
+        </div>
+        
+        <div class="progress" id="progress">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        
+        <div id="progressText" class="progress-text" style="display: none;"></div>
+        
+        <div id="fileReady" class="file-ready" style="display: none;">
+            <h3>File Ready for Processing</h3>
+            <p id="fileInfo"></p>
+            <button class="run-btn" id="runBtn">Run Now</button>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div class="summary" id="summary">
+            <h3>Processing Summary</h3>
+            <div id="summaryContent"></div>
+        </div>
+        
+        <div class="results" id="results">
+            <h3>Results</h3>
+            <div id="resultsContent"></div>
+            <button class="download-btn" id="downloadBtn">Download Cleaned File</button>
+        </div>
+    </div>
+
+    <script>
+        let currentFilename = null;
+        let currentRecords = [];
+        let processingInterval = null;
+        let processingStartTime = null;
+        
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const progress = document.getElementById('progress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const fileReady = document.getElementById('fileReady');
+        const runBtn = document.getElementById('runBtn');
+        const summary = document.getElementById('summary');
+        const results = document.getElementById('results');
+        const error = document.getElementById('error');
+        
+        // Drag and drop functionality
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('drop', handleDrop);
+        fileInput.addEventListener('change', handleFileSelect);
+        runBtn.addEventListener('click', startProcessing);
+        
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
+        
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        }
+        
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                processFile(file);
+            }
+        }
+        
+        function processFile(file) {
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                showError('Please select a CSV file.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            progress.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressText.style.display = 'block';
+            progressText.textContent = 'Uploading file...';
+            hideError();
+            hideFileReady();
+            hideResults();
+            
+            // Simple upload progress simulation
+            let progressValue = 0;
+            const progressInterval = setInterval(() => {
+                progressValue += Math.random() * 20;
+                if (progressValue < 90) {
+                    progressBar.style.width = progressValue + '%';
+                }
+            }, 200);
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                clearInterval(progressInterval);
+                progressBar.style.width = '100%';
+                
+                if (data.success) {
+                    currentFilename = data.filename;
+                    progressText.textContent = 'Upload complete!';
+                    
+                    // Show file ready section
+                    setTimeout(() => {
+                        progress.style.display = 'none';
+                        progressText.style.display = 'none';
+                        showFileReady(data.filename, data.total_records);
+                    }, 1000);
+                } else {
+                    showError(data.error || 'An error occurred while uploading the file.');
+                    progress.style.display = 'none';
+                    progressText.style.display = 'none';
+                }
+            })
+            .catch(err => {
+                clearInterval(progressInterval);
+                progress.style.display = 'none';
+                progressText.style.display = 'none';
+                showError('An error occurred while uploading the file.');
+            });
+        }
+        
+        function startProcessing() {
+            if (!currentFilename) {
+                showError('No file selected for processing.');
+                return;
+            }
+            
+            runBtn.disabled = true;
+            hideFileReady();
+            progress.style.display = 'block';
+            progressText.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressText.textContent = 'Starting processing...';
+            
+            fetch('/process', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filename: currentFilename
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Start polling for progress
+                    startProgressPolling();
+                } else {
+                    showError(data.error || 'Failed to start processing.');
+                    runBtn.disabled = false;
+                    progress.style.display = 'none';
+                    progressText.style.display = 'none';
+                }
+            })
+            .catch(err => {
+                showError('An error occurred while starting processing.');
+                runBtn.disabled = false;
+                progress.style.display = 'none';
+                progressText.style.display = 'none';
+            });
+        }
+        
+        function startProgressPolling() {
+            if (processingInterval) {
+                clearInterval(processingInterval);
+            }
+            
+            processingStartTime = Date.now();
+            
+            processingInterval = setInterval(() => {
+                // Timeout after 10 minutes (600,000 ms)
+                if (Date.now() - processingStartTime > 600000) {
+                    clearInterval(processingInterval);
+                    processingInterval = null;
+                    showError('Processing timeout. The operation took too long. Please try again with a smaller file.');
+                    runBtn.disabled = false;
+                    progress.style.display = 'none';
+                    progressText.style.display = 'none';
+                    return;
+                }
+                fetch('/progress')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Progress update:', data); // Debug logging
+                    updateProgress(data);
+                    
+                    if (data.completed || data.error) {
+                        clearInterval(processingInterval);
+                        processingInterval = null;
+                        
+                        if (data.completed) {
+                            console.log('Processing completed, loading results...'); // Debug logging
+                            handleProcessingComplete(data);
+                        } else if (data.error) {
+                            console.error('Processing error:', data.error); // Debug logging
+                            showError(data.error);
+                            runBtn.disabled = false;
+                            progress.style.display = 'none';
+                            progressText.style.display = 'none';
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error('Error fetching progress:', err);
+                    clearInterval(processingInterval);
+                    processingInterval = null;
+                    showError('Lost connection while processing. Please refresh and try again.');
+                    runBtn.disabled = false;
+                    progress.style.display = 'none';
+                    progressText.style.display = 'none';
+                });
+            }, 1000); // Poll every second
+        }
+        
+        function updateProgress(data) {
+            if (data.total_batches > 0) {
+                const percentage = (data.current_batch / data.total_batches) * 100;
+                progressBar.style.width = percentage + '%';
+            }
+            
+            progressText.textContent = data.status_message || 'Processing...';
+        }
+        
+        function handleProcessingComplete(data) {
+            progress.style.display = 'none';
+            progressText.style.display = 'none';
+            runBtn.disabled = false;
+            
+            // Fetch the complete results from the results endpoint
+            if (data.output_filename) {
+                fetch(`/results/${data.output_filename}`)
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.text(); // Get as text first to debug
+                })
+                .then(text => {
+                    console.log('Raw response:', text.substring(0, 200) + '...'); // Log first 200 chars
+                    try {
+                        const resultsData = JSON.parse(text);
+                        if (resultsData.success) {
+                            currentRecords = resultsData.records;
+                            displayResults(resultsData);
+                        } else {
+                            showError(resultsData.error || 'Failed to load results');
+                        }
+                    } catch (parseError) {
+                        console.error('JSON parse error:', parseError);
+                        console.error('Failed to parse:', text.substring(0, 500));
+                        showError('Error parsing results data. Check console for details.');
+                    }
+                })
+                .catch(err => {
+                    console.error('Fetch error:', err);
+                    showError('Error loading results: ' + err.message);
+                });
+            } else {
+                showError('Processing completed but no output file was generated');
+            }
+        }
+        
+        function showFileReady(filename, totalRecords) {
+            document.getElementById('fileInfo').textContent = 
+                `${filename} uploaded successfully (${totalRecords} leads). Ready to process!`;
+            fileReady.style.display = 'block';
+        }
+        
+        function hideFileReady() {
+            fileReady.style.display = 'none';
+        }
+        
+        function hideResults() {
+            summary.style.display = 'none';
+            results.style.display = 'none';
+        }
+        
+        function displayResults(data) {
+            // Display summary
+            const summaryContent = document.getElementById('summaryContent');
+            summaryContent.innerHTML = `
+                <div class="summary-item flag-0">Unchanged: ${data.summary.unchanged}</div>
+                <div class="summary-item flag-1">Corrected: ${data.summary.corrected}</div>
+                <div class="summary-item flag-2">Needs Review: ${data.summary.suspicious}</div>
+                <div class="summary-item">Total: ${data.summary.total}</div>
+            `;
+            summary.style.display = 'block';
+            
+            // Display detailed results
+            const resultsContent = document.getElementById('resultsContent');
+            resultsContent.innerHTML = '';
+            
+            data.records.forEach((record, index) => {
+                const recordDiv = document.createElement('div');
+                // Ensure validation_flag is treated as string for CSS class
+                const flagValue = String(record.validation_flag);
+                recordDiv.className = `record flag-${flagValue}`;
+                
+                const flagText = {
+                    '0': 'No Changes',
+                    '1': 'Corrected',
+                    '2': 'Needs Review',
+                    0: 'No Changes',
+                    1: 'Corrected',
+                    2: 'Needs Review'
+                };
+                
+                recordDiv.innerHTML = `
+                    <div class="record-header" onclick="toggleRecord(${index})">
+                        Record ${index + 1} - ${flagText[flagValue]}
+                    </div>
+                    <div class="record-content" id="record-${index}">
+                        <div class="field-group" id="fields-${index}"></div>
+                    </div>
+                `;
+                
+                resultsContent.appendChild(recordDiv);
+                
+                // Populate fields
+                const fieldsContainer = document.getElementById(`fields-${index}`);
+                Object.keys(record).forEach(key => {
+                    if (key !== 'validation_flag') {
+                        const fieldDiv = document.createElement('div');
+                        fieldDiv.className = 'field';
+                        fieldDiv.innerHTML = `
+                            <label>${key}</label>
+                            <input type="text" value="${record[key] || ''}" 
+                                   onchange="updateRecord(${index}, '${key}', this.value)">
+                        `;
+                        fieldsContainer.appendChild(fieldDiv);
+                    }
+                });
+            });
+            
+            results.style.display = 'block';
+            
+            // Setup download button
+            document.getElementById('downloadBtn').onclick = () => {
+                window.location.href = `/download/${data.output_filename}`;
+            };
+        }
+        
+        function toggleRecord(index) {
+            const content = document.getElementById(`record-${index}`);
+            content.style.display = content.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function updateRecord(index, field, value) {
+            currentRecords[index][field] = value;
+            
+            // Send update to server (use the cleaned filename)
+            const cleanedFilename = `cleaned_${currentFilename}`;
+            fetch('/update_record', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filename: cleanedFilename,
+                    index: index,
+                    record: currentRecords[index]
+                })
+            });
+        }
+        
+        function showError(message) {
+            error.textContent = message;
+            error.style.display = 'block';
+        }
+        
+        function hideError() {
+            error.style.display = 'none';
+        }
+    </script>
+</body>
+</html> 
