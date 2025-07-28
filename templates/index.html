@@ -180,9 +180,50 @@
         }
         
         .field input {
+            width: 100%;
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        
+        .empty-field {
+            opacity: 0.6;
+        }
+        
+        .empty-field input {
+            background-color: #f8f9fa;
+            border-style: dashed;
+        }
+        
+        .hidden-fields-indicator {
+            padding: 10px;
+            text-align: center;
+            background-color: #f8f9fa;
+            border: 1px dashed #dee2e6;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .toggle-container {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .toggle-container label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 14px;
+            color: #495057;
+        }
+        
+        .toggle-container input[type="checkbox"] {
+            margin-right: 8px;
         }
         
         .download-btn {
@@ -521,6 +562,12 @@
                 <div class="summary-item flag-1">Corrected: ${data.summary.corrected}</div>
                 <div class="summary-item flag-2">Needs Review: ${data.summary.suspicious}</div>
                 <div class="summary-item">Total: ${data.summary.total}</div>
+                <div class="toggle-container">
+                    <label>
+                        <input type="checkbox" id="showEmptyFields" onchange="toggleEmptyFields()">
+                        Show empty fields
+                    </label>
+                </div>
             `;
             summary.style.display = 'block';
             
@@ -554,20 +601,8 @@
                 
                 resultsContent.appendChild(recordDiv);
                 
-                // Populate fields
-                const fieldsContainer = document.getElementById(`fields-${index}`);
-                Object.keys(record).forEach(key => {
-                    if (key !== 'validation_flag') {
-                        const fieldDiv = document.createElement('div');
-                        fieldDiv.className = 'field';
-                        fieldDiv.innerHTML = `
-                            <label>${key}</label>
-                            <input type="text" value="${record[key] || ''}" 
-                                   onchange="updateRecord(${index}, '${key}', this.value)">
-                        `;
-                        fieldsContainer.appendChild(fieldDiv);
-                    }
-                });
+                // Populate fields (initially hide empty ones)
+                populateFields(record, index, false);
             });
             
             results.style.display = 'block';
@@ -578,6 +613,81 @@
             };
         }
         
+        function isFieldEmpty(value) {
+            // Define what constitutes an empty/NA field
+            if (!value) return true;
+            const strValue = String(value).trim().toLowerCase();
+            return strValue === '' || 
+                   strValue === 'na' || 
+                   strValue === 'n/a' || 
+                   strValue === 'null' || 
+                   strValue === 'undefined' || 
+                   strValue === 'none' ||
+                   strValue === '-' ||
+                   strValue === '0' && value !== 0; // String '0' but not numeric 0
+        }
+        
+        function populateFields(record, recordIndex, showEmpty) {
+            const fieldsContainer = document.getElementById(`fields-${recordIndex}`);
+            fieldsContainer.innerHTML = '';
+            
+            // Separate fields into filled and empty
+            const filledFields = [];
+            const emptyFields = [];
+            
+            Object.keys(record).forEach(key => {
+                if (key !== 'validation_flag') {
+                    const fieldData = { key, value: record[key] || '' };
+                    if (isFieldEmpty(fieldData.value)) {
+                        emptyFields.push(fieldData);
+                    } else {
+                        filledFields.push(fieldData);
+                    }
+                }
+            });
+            
+            // Always show filled fields
+            filledFields.forEach(field => {
+                createFieldElement(field.key, field.value, recordIndex, fieldsContainer, false);
+            });
+            
+            // Show empty fields only if requested
+            if (showEmpty) {
+                emptyFields.forEach(field => {
+                    createFieldElement(field.key, field.value, recordIndex, fieldsContainer, true);
+                });
+            }
+            
+            // Add a count indicator if there are hidden empty fields
+            if (!showEmpty && emptyFields.length > 0) {
+                const hiddenCount = document.createElement('div');
+                hiddenCount.className = 'hidden-fields-indicator';
+                hiddenCount.innerHTML = `<small style="color: #666; font-style: italic;">+ ${emptyFields.length} empty fields hidden</small>`;
+                fieldsContainer.appendChild(hiddenCount);
+            }
+        }
+        
+        function createFieldElement(key, value, recordIndex, container, isEmpty) {
+            const fieldDiv = document.createElement('div');
+            fieldDiv.className = isEmpty ? 'field empty-field' : 'field';
+            fieldDiv.innerHTML = `
+                <label>${key}</label>
+                <input type="text" value="${value}" 
+                       onchange="updateRecord(${recordIndex}, '${key}', this.value)"
+                       ${isEmpty ? 'placeholder="Empty field"' : ''}>
+            `;
+            container.appendChild(fieldDiv);
+        }
+        
+        function toggleEmptyFields() {
+            const showEmpty = document.getElementById('showEmptyFields').checked;
+            
+            // Re-populate all records with new visibility setting
+            currentRecords.forEach((record, index) => {
+                populateFields(record, index, showEmpty);
+            });
+        }
+        
         function toggleRecord(index) {
             const content = document.getElementById(`record-${index}`);
             content.style.display = content.style.display === 'none' ? 'block' : 'none';
@@ -585,6 +695,10 @@
         
         function updateRecord(index, field, value) {
             currentRecords[index][field] = value;
+            
+            // Refresh the field display to update empty/filled status
+            const showEmpty = document.getElementById('showEmptyFields').checked;
+            populateFields(currentRecords[index], index, showEmpty);
             
             // Send update to server (use the cleaned filename)
             const cleanedFilename = `cleaned_${currentFilename}`;

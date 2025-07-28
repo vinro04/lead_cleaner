@@ -60,35 +60,31 @@ def get_results(filename):
         if not os.path.exists(output_path):
             return jsonify({'error': 'Results file not found'}), 404
         
-        # Read the processed data
-        processed_df = pd.read_csv(output_path)
+        # Read the processed JSON data
+        with open(output_path, 'r', encoding='utf-8') as f:
+            processed_data = json.load(f)
         
-        # Clean the data for JSON serialization
-        # Replace NaN values with empty strings
-        processed_df = processed_df.fillna('')
-        
-        # Convert all data to strings to avoid serialization issues
-        for column in processed_df.columns:
-            processed_df[column] = processed_df[column].astype(str)
+        if not isinstance(processed_data, list):
+            return jsonify({'error': 'Invalid results file format'}), 500
         
         # Get summary statistics
-        total_records = len(processed_df)
-        unchanged = len(processed_df[processed_df['validation_flag'] == '0'])
-        corrected = len(processed_df[processed_df['validation_flag'] == '1'])
-        suspicious = len(processed_df[processed_df['validation_flag'] == '2'])
+        total_records = len(processed_data)
+        unchanged = len([r for r in processed_data if r.get('validation_flag') == '0'])
+        corrected = len([r for r in processed_data if r.get('validation_flag') == '1'])
+        suspicious = len([r for r in processed_data if r.get('validation_flag') == '2'])
         
-        # Convert to records with additional sanitization
-        records = []
-        for _, row in processed_df.iterrows():
-            record = {}
-            for col, val in row.items():
-                # Ensure all values are serializable strings
-                if pd.isna(val) or val == 'nan':
-                    record[col] = ''
+        # Clean records for JSON serialization
+        cleaned_records = []
+        for record in processed_data:
+            cleaned_record = {}
+            for key, value in record.items():
+                # Ensure all values are clean strings
+                if value is None or value == 'nan':
+                    cleaned_record[key] = ''
                 else:
                     # Remove any problematic characters
-                    record[col] = str(val).replace('\x00', '').strip()
-            records.append(record)
+                    cleaned_record[key] = str(value).replace('\x00', '').strip()
+            cleaned_records.append(cleaned_record)
         
         result = {
             'success': True,
@@ -99,7 +95,7 @@ def get_results(filename):
                 'corrected': corrected,
                 'suspicious': suspicious
             },
-            'records': records
+            'records': cleaned_records
         }
         
         return jsonify(result)
@@ -119,8 +115,9 @@ def upload_file():
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
     
-    if not file.filename.lower().endswith('.csv'):
-        return jsonify({'error': 'Only CSV files are allowed'}), 400
+    file_ext = file.filename.lower().split('.')[-1]
+    if file_ext not in ['csv', 'json']:
+        return jsonify({'error': 'Only CSV (with any delimiter: , ; | tab) and JSON files are allowed'}), 400
     
     try:
         # Save uploaded file
@@ -128,9 +125,17 @@ def upload_file():
         upload_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(upload_path)
         
-        # Read file to get total record count
-        df = pd.read_csv(upload_path)
-        total_records = len(df)
+        # For CSV files, keep them as CSV for LLM processing
+        if file_ext == 'csv':
+            # Just validate the CSV can be read and get record count
+            total_records = validate_csv_file(upload_path)
+            processing_filename = filename  # Keep original CSV filename
+        else:
+            # For JSON files, validate and potentially clean
+            json_filename = filename.rsplit('.', 1)[0] + '.json'
+            json_path = os.path.join(app.config['UPLOAD_FOLDER'], json_filename)
+            total_records = validate_and_clean_json(upload_path, json_path)
+            processing_filename = json_filename
         
         # Reset processing status
         processing_status.update({
@@ -139,7 +144,7 @@ def upload_file():
             'total_batches': 0,
             'leads_processed': 0,
             'total_leads': total_records,
-            'filename': filename,
+            'filename': processing_filename,
             'status_message': f'File uploaded: {total_records} leads ready for processing',
             'completed': False,
             'error': None
@@ -147,9 +152,9 @@ def upload_file():
         
         result = {
             'success': True,
-            'filename': filename,
+            'filename': processing_filename,
             'total_records': total_records,
-            'message': 'File uploaded successfully. Click "Run Now" to start processing.'
+            'message': f'File uploaded successfully. {total_records} leads ready for processing.'
         }
         
         return jsonify(result)
@@ -157,6 +162,245 @@ def upload_file():
     except Exception as e:
         logging.error(f"Error uploading file: {e}")
         return jsonify({'error': f'Error uploading file: {str(e)}'}), 500
+
+def validate_csv_file(csv_path):
+    """Validate CSV file and return record count without converting to JSON"""
+    try:
+        # Detect delimiter for validation
+        delimiter = detect_csv_delimiter(csv_path)
+        logging.info(f"CSV validation using delimiter: '{delimiter}'")
+        
+        # Try reading with detected delimiter to validate and count records
+        import csv
+        
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f, delimiter=delimiter, quotechar='"')
+            headers = next(reader)  # Read headers
+            
+            # Count data rows
+            record_count = 0
+            for row in reader:
+                if any(field.strip() for field in row):  # Skip completely empty rows
+                    record_count += 1
+        
+        logging.info(f"CSV validation successful: {len(headers)} columns, {record_count} records")
+        return record_count
+        
+    except Exception as e:
+        logging.error(f"CSV validation failed: {e}")
+        raise Exception(f"Invalid CSV file: {str(e)}")
+
+def detect_csv_delimiter(csv_path):
+    """Detect the CSV delimiter by analyzing the first few lines with strong validation"""
+    import csv
+    
+    # Common delimiters to test, prioritized by likelihood
+    delimiters = [',', ';', '\t', '|']  # Put pipe last as it's least likely for CSV
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            # Read more sample data for better detection
+            sample = f.read(2048)
+            
+        # Use csv.Sniffer to detect delimiter first
+        sniffer = csv.Sniffer()
+        try:
+            # Prioritize comma and semicolon in sniffer
+            dialect = sniffer.sniff(sample, delimiters=',;\t|')
+            detected_delimiter = dialect.delimiter
+            
+            # STRONG validation of sniffer result
+            lines = sample.split('\n')
+            if len(lines) >= 2:
+                # Use csv.reader to properly count fields (handles quotes)
+                from io import StringIO
+                
+                # Test with detected delimiter using csv.reader
+                test_sample = '\n'.join(lines[:2])  # Just header and first data line
+                test_reader = csv.reader(StringIO(test_sample), delimiter=detected_delimiter, quotechar='"')
+                
+                try:
+                    headers = next(test_reader)
+                    first_row = next(test_reader)
+                    
+                    header_count = len(headers)
+                    data_count = len(first_row)
+                    
+                    # Strong validation criteria
+                    if (header_count > 1 and data_count > 1 and 
+                        abs(header_count - data_count) <= 1 and
+                        header_count >= 3):  # Must have at least 3 fields for lead data
+                        
+                        logging.info(f"CSV Sniffer validated: '{detected_delimiter}' (headers: {header_count}, data: {data_count})")
+                        return detected_delimiter
+                    else:
+                        logging.warning(f"CSV Sniffer validation failed: '{detected_delimiter}' (headers: {header_count}, data: {data_count})")
+                        
+                except Exception as reader_error:
+                    logging.warning(f"CSV reader validation failed for '{detected_delimiter}': {reader_error}")
+            
+        except Exception as sniffer_error:
+            logging.warning(f"CSV Sniffer failed: {sniffer_error}")
+        
+        # Enhanced manual fallback with stronger validation
+        lines = sample.split('\n')
+        if len(lines) < 2:
+            logging.warning("Not enough lines for delimiter detection, defaulting to comma")
+            return ','
+        
+        logging.info("Using enhanced manual delimiter detection")
+        
+        # Test each delimiter with stronger criteria
+        best_delimiter = ','
+        best_score = 0
+        delimiter_results = {}
+        
+        for delimiter in delimiters:
+            try:
+                # Use csv.reader for accurate field counting
+                from io import StringIO
+                test_sample = '\n'.join(lines[:3])  # First 3 lines
+                test_reader = csv.reader(StringIO(test_sample), delimiter=delimiter, quotechar='"')
+                
+                field_counts = []
+                line_count = 0
+                
+                for row in test_reader:
+                    if row:  # Skip empty rows
+                        field_counts.append(len(row))
+                        line_count += 1
+                        
+                if field_counts and line_count >= 2:
+                    avg_fields = sum(field_counts) / len(field_counts)
+                    variance = sum((x - avg_fields) ** 2 for x in field_counts) / len(field_counts)
+                    
+                    # Enhanced scoring with strong bias against problematic delimiters
+                    if avg_fields >= 3 and avg_fields < 100:  # Must have at least 3 fields
+                        # Heavily penalize single-field results (likely wrong delimiter)
+                        if avg_fields < 2:
+                            score = 0
+                        else:
+                            # Base score calculation
+                            consistency_bonus = 1 / (1 + variance)
+                            field_count_bonus = min(avg_fields / 10, 1)  # Optimal around 10 fields
+                            
+                            # Special bonuses and penalties
+                            delimiter_bonus = 1.0
+                            if delimiter == ',':
+                                delimiter_bonus = 1.5  # Strong preference for comma
+                            elif delimiter == ';':
+                                delimiter_bonus = 1.2  # Some preference for semicolon
+                            elif delimiter == '|':
+                                delimiter_bonus = 0.5  # Penalty for pipe (rarely used in CSV)
+                            
+                            score = avg_fields * consistency_bonus * field_count_bonus * delimiter_bonus
+                        
+                        delimiter_results[delimiter] = {
+                            'avg_fields': avg_fields,
+                            'variance': variance,
+                            'score': score,
+                            'field_counts': field_counts
+                        }
+                        
+                        logging.info(f"Delimiter '{delimiter}': avg_fields={avg_fields:.1f}, variance={variance:.2f}, score={score:.2f}")
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_delimiter = delimiter
+                            
+            except Exception as e:
+                logging.warning(f"Error testing delimiter '{delimiter}': {e}")
+                continue
+        
+        # Final validation of chosen delimiter
+        if best_delimiter and best_score > 0:
+            result = delimiter_results.get(best_delimiter, {})
+            avg_fields = result.get('avg_fields', 0)
+            
+            # Absolutely prevent single-field results
+            if avg_fields < 2:
+                logging.error(f"Chosen delimiter '{best_delimiter}' produces too few fields ({avg_fields}), forcing comma")
+                best_delimiter = ','
+            
+            # Extra validation: test if delimiter actually works
+            try:
+                from io import StringIO
+                test_sample = '\n'.join(lines[:2])
+                test_reader = csv.reader(StringIO(test_sample), delimiter=best_delimiter, quotechar='"')
+                headers = next(test_reader)
+                data = next(test_reader)
+                
+                if len(headers) >= 3 and len(data) >= 3:
+                    logging.info(f"Final validation passed: delimiter '{best_delimiter}' produces {len(headers)} headers, {len(data)} data fields")
+                    return best_delimiter
+                else:
+                    logging.error(f"Final validation failed: delimiter '{best_delimiter}' produces {len(headers)} headers, {len(data)} data fields")
+                    
+            except Exception as validation_error:
+                logging.error(f"Final validation error for '{best_delimiter}': {validation_error}")
+        
+        # Ultimate fallback with explicit check
+        logging.warning("All delimiter detection methods failed or produced invalid results")
+        
+        # Try comma as last resort
+        try:
+            from io import StringIO
+            test_sample = '\n'.join(lines[:2])
+            test_reader = csv.reader(StringIO(test_sample), delimiter=',', quotechar='"')
+            headers = next(test_reader)
+            data = next(test_reader)
+            
+            if len(headers) >= 2 and len(data) >= 2:
+                logging.info(f"Fallback to comma successful: {len(headers)} headers, {len(data)} data fields")
+                return ','
+                
+        except Exception:
+            pass
+        
+        # Absolute last resort
+        logging.error("Even comma fallback failed, but returning comma anyway")
+        return ','
+        
+    except Exception as e:
+        logging.error(f"Critical error in delimiter detection: {e}")
+        return ','  # Always return comma as final fallback
+
+
+# Note: CSV to JSON conversion functions removed - we now pass CSV data directly to LLM
+# This eliminates delimiter detection issues and makes the system more robust
+
+
+def validate_and_clean_json(json_path, output_json_path):
+    """Validate and clean JSON input"""
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, list):
+            raise Exception("JSON must contain an array of records")
+        
+        # Clean the records
+        cleaned_records = []
+        for record in data:
+            if isinstance(record, dict):
+                # Clean each field
+                cleaned_record = {}
+                for key, value in record.items():
+                    # Ensure keys are strings and clean values
+                    clean_key = str(key).lower().strip()
+                    clean_value = str(value) if value is not None else ""
+                    cleaned_record[clean_key] = clean_value
+                cleaned_records.append(cleaned_record)
+        
+        # Save cleaned JSON
+        with open(output_json_path, 'w', encoding='utf-8') as f:
+            json.dump(cleaned_records, f, indent=2, ensure_ascii=False)
+        
+        return len(cleaned_records)
+        
+    except Exception as e:
+        logging.error(f"Error validating JSON: {e}")
+        raise Exception(f"Invalid JSON format: {str(e)}")
 
 @app.route('/process', methods=['POST'])
 def process_file():
@@ -180,7 +424,13 @@ def process_file():
         global processing_status
         
         try:
-            output_filename = f"cleaned_{filename}"
+            # Determine input file type and set output filename
+            file_ext = upload_path.lower().split('.')[-1]
+            if file_ext == 'csv':
+                output_filename = f"cleaned_{filename.rsplit('.', 1)[0]}.json"
+            else:
+                output_filename = f"cleaned_{filename.rsplit('.', 1)[0]}.json"
+            
             output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
             
             processing_status.update({
@@ -193,16 +443,20 @@ def process_file():
             })
             
             # Process the file with progress callback
-            cleaner.process_csv_with_progress(upload_path, output_path, progress_callback=update_progress)
+            if file_ext == 'csv':
+                cleaner.process_csv_with_progress(upload_path, output_path, progress_callback=update_progress)
+            else:
+                cleaner.process_json_with_progress(upload_path, output_path, progress_callback=update_progress)
             
             # Read the processed data for final results
-            processed_df = pd.read_csv(output_path)
+            with open(output_path, 'r', encoding='utf-8') as f:
+                processed_data = json.load(f)
             
             # Get summary statistics
-            total_records = len(processed_df)
-            unchanged = len(processed_df[processed_df['validation_flag'] == 0])
-            corrected = len(processed_df[processed_df['validation_flag'] == 1])
-            suspicious = len(processed_df[processed_df['validation_flag'] == 2])
+            total_records = len(processed_data)
+            unchanged = len([r for r in processed_data if r.get('validation_flag') == '0'])
+            corrected = len([r for r in processed_data if r.get('validation_flag') == '1'])
+            suspicious = len([r for r in processed_data if r.get('validation_flag') == '2'])
             
             processing_status.update({
                 'is_processing': False,
@@ -233,7 +487,7 @@ def process_file():
     
     return jsonify({'success': True, 'message': 'Processing started'})
 
-def update_progress(current_batch, total_batches, leads_processed, total_leads, batch_size=10):
+def update_progress(current_batch, total_batches, leads_processed, total_leads, batch_size=1):
     """Callback function to update processing progress"""
     global processing_status
     
@@ -241,7 +495,7 @@ def update_progress(current_batch, total_batches, leads_processed, total_leads, 
         'current_batch': current_batch,
         'total_batches': total_batches,
         'leads_processed': leads_processed,
-        'status_message': f'Processing batch {current_batch}/{total_batches} - {leads_processed}/{total_leads} leads cleaned'
+        'status_message': f'Processing record {current_batch}/{total_batches} - {leads_processed}/{total_leads} leads cleaned'
     })
 
 @app.route('/download/<filename>')
@@ -260,18 +514,23 @@ def update_record():
         record_index = data.get('index')
         updated_record = data.get('record')
         
-        # Read the current file
+        # Read the current JSON file
         file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
-        df = pd.read_csv(file_path)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            records = json.load(f)
         
         # Update the specific record
-        for key, value in updated_record.items():
-            df.at[record_index, key] = value
-        
-        # Save the updated file
-        df.to_csv(file_path, index=False)
-        
-        return jsonify({'success': True})
+        if 0 <= record_index < len(records):
+            for key, value in updated_record.items():
+                records[record_index][key] = value
+            
+            # Save the updated file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(records, f, indent=2, ensure_ascii=False)
+            
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Invalid record index'}), 400
         
     except Exception as e:
         logging.error(f"Error updating record: {e}")
