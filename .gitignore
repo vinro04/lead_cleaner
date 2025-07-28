@@ -34,10 +34,18 @@ ENV/
 Thumbs.db
 
 # Application specific
-uploads/*.csv
-outputs/*.csv
+uploads/*
+outputs/*
 !uploads/.gitkeep
 !outputs/.gitkeep
+test_*.csv
+test_*.json
+*.test.csv
+*.test.json
 
 # Environment variables
-.env 
+.env
+
+# Development files
+.replit
+replit.nix 

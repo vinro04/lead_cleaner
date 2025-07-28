@@ -234,11 +234,24 @@
             border-radius: 6px;
             cursor: pointer;
             font-size: 16px;
-            margin-top: 20px;
+            margin: 10px 10px 10px 0;
         }
         
         .download-btn:hover {
             background: #218838;
+        }
+        
+        .download-btn.csv {
+            background: #17a2b8;
+        }
+        
+        .download-btn.csv:hover {
+            background: #138496;
+        }
+        
+        .download-section {
+            margin-top: 20px;
+            text-align: center;
         }
         
         .error {
@@ -288,7 +301,11 @@
         <div class="results" id="results">
             <h3>Results</h3>
             <div id="resultsContent"></div>
-            <button class="download-btn" id="downloadBtn">Download Cleaned File</button>
+            <div class="download-section">
+                <h4>Download Results</h4>
+                <button class="download-btn" id="downloadJsonBtn">Download as JSON</button>
+                <button class="download-btn csv" id="downloadCsvBtn">Download as CSV</button>
+            </div>
         </div>
     </div>
 
@@ -607,9 +624,13 @@
             
             results.style.display = 'block';
             
-            // Setup download button
-            document.getElementById('downloadBtn').onclick = () => {
-                window.location.href = `/download/${data.output_filename}`;
+            // Setup download buttons
+            document.getElementById('downloadJsonBtn').onclick = () => {
+                window.location.href = `/download/${data.output_filename}/json`;
+            };
+            
+            document.getElementById('downloadCsvBtn').onclick = () => {
+                window.location.href = `/download/${data.output_filename}/csv`;
             };
         }
         

@@ -8,9 +8,9 @@ import logging
 class LeadCleaner:
     def __init__(self, api_key: str):
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-4.1-2025-04-14",
             openai_api_key=api_key,
-            temperature=0
+            temperature=0.2
         )
         
     def clean_batch(self, batch_records: List[Dict]) -> List[Dict]:
@@ -192,7 +192,7 @@ CRITICAL CLEANING RULES:
    - Countries → "country" field
 
 6. **MISSING VALUES**: 
-   - Fill out field with "NA" if data is genuinely not available
+   - Fill out field with "NA" if data is genuinely not available, BUT pay close attention to all data, there might be data hidden in different fields. -> Maybe the contact persons name is in the Adress.
    - DO NOT invent or create data
    - DO NOT move data unless you're confident it belongs in another field
 
@@ -202,19 +202,21 @@ CRITICAL CLEANING RULES:
    - If a website appears in wrong field, move it to appropriate website field
    - If a company name appears in a person name field, move it to company field
 
-8. **MULTIPLE CONTACT FIELDS**: 
-   - Use Phone_2, Email_2, Website_2, Profile URL_2, Phone_3, etc. for additional contact info
-   - These fields are completely optional - only use if data exists
+9. **MULTIPLE CONTACT FIELDS & DUPLICATE REMOVAL**: 
+   - Use Phone_2, Email_2, Website_2, Profile URL_2, Phone_3, etc. ONLY for genuinely different contact info
+   - These fields are completely optional - only use if data exists AND is different from primary fields
    - Don't create empty numbered fields
-   - Do not put in duplicate data into the additional fields, if you find duplicates delete it and keep the original data
-   - You are encouraged to delete data if its a clear duplicate
+   - **CRITICAL: NEVER DUPLICATE VALUES** - if Phone_2 has the same value as Phone, DELETE Phone_2 completely
+   - **REMOVE ALL DUPLICATES**: If any numbered field (Phone_2, Email_2, Website_2, etc.) contains the same value as the primary field, remove the duplicate entirely
+   - Set duplicate fields to "NA" rather than keeping duplicate values
+   - Example: if Phone="123456" and Phone_2="123456", then set Phone_2="NA"
 
-9. **PRESERVE EXISTING DATA**: 
+10. **PRESERVE EXISTING DATA**: 
    - If data is already in the correct field, leave it unchanged unless there is a 1 to 1 duplicate in the additional fields.
    - Only move data when there's a clear mismatch
    - Better to leave questionable data in place than to move it incorrectly
 
-10. **SPECIAL FIELDS**:
+11. **SPECIAL FIELDS**:
     - Keep physiotherapy-specific content in Physio_Tags, Physio_Specialization
     - Preserve language information in Lead_language
     - Maintain business descriptions in Lead_Description

@@ -9,6 +9,8 @@ import tempfile
 import json
 import threading
 import time
+import csv
+import io
 
 # Load environment variables
 load_dotenv()
@@ -274,26 +276,25 @@ def detect_csv_delimiter(csv_path):
                     avg_fields = sum(field_counts) / len(field_counts)
                     variance = sum((x - avg_fields) ** 2 for x in field_counts) / len(field_counts)
                     
-                    # Enhanced scoring with strong bias against problematic delimiters
-                    if avg_fields >= 3 and avg_fields < 100:  # Must have at least 3 fields
+                    # Enhanced scoring based on field consistency and count
+                    if avg_fields >= 2 and avg_fields < 200:  # Must have at least 2 fields
                         # Heavily penalize single-field results (likely wrong delimiter)
                         if avg_fields < 2:
                             score = 0
                         else:
                             # Base score calculation
                             consistency_bonus = 1 / (1 + variance)
-                            field_count_bonus = min(avg_fields / 10, 1)  # Optimal around 10 fields
                             
-                            # Special bonuses and penalties
-                            delimiter_bonus = 1.0
-                            if delimiter == ',':
-                                delimiter_bonus = 1.5  # Strong preference for comma
-                            elif delimiter == ';':
-                                delimiter_bonus = 1.2  # Some preference for semicolon
-                            elif delimiter == '|':
-                                delimiter_bonus = 0.5  # Penalty for pipe (rarely used in CSV)
+                            # Score based on consistency rather than biasing specific delimiters
+                            # Higher field counts with low variance get better scores
+                            if variance < 1.0:  # Very consistent field counts
+                                consistency_multiplier = 2.0
+                            elif variance < 5.0:  # Reasonably consistent
+                                consistency_multiplier = 1.5
+                            else:  # Less consistent
+                                consistency_multiplier = 1.0
                             
-                            score = avg_fields * consistency_bonus * field_count_bonus * delimiter_bonus
+                            score = avg_fields * consistency_bonus * consistency_multiplier
                         
                         delimiter_results[delimiter] = {
                             'avg_fields': avg_fields,
@@ -505,6 +506,94 @@ def download_file(filename):
         return send_file(file_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': f'File not found: {str(e)}'}), 404
+
+@app.route('/download/<filename>/<format>')
+def download_file_format(filename, format):
+    """Download file in specified format (json or csv)"""
+    try:
+        file_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+        
+        if format.lower() == 'json':
+            return send_file(file_path, as_attachment=True)
+        
+        elif format.lower() == 'csv':
+            # Read JSON data and convert to CSV
+            with open(file_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+            
+            if not isinstance(json_data, list) or not json_data:
+                return jsonify({'error': 'No data to export'}), 400
+            
+            # Create CSV content
+            csv_content = convert_json_to_csv(json_data)
+            
+            # Create a temporary file-like object
+            output = io.StringIO()
+            output.write(csv_content)
+            output.seek(0)
+            
+            # Convert to bytes for Flask response
+            csv_bytes = output.getvalue().encode('utf-8')
+            
+            # Generate CSV filename
+            base_filename = filename.rsplit('.', 1)[0]  # Remove .json extension
+            csv_filename = f"{base_filename}.csv"
+            
+            return send_file(
+                io.BytesIO(csv_bytes),
+                mimetype='text/csv',
+                as_attachment=True,
+                download_name=csv_filename
+            )
+        
+        else:
+            return jsonify({'error': 'Invalid format. Use "json" or "csv"'}), 400
+            
+    except Exception as e:
+        logging.error(f"Error downloading file: {e}")
+        return jsonify({'error': f'Error downloading file: {str(e)}'}), 500
+
+def convert_json_to_csv(json_data):
+    """Convert JSON array to CSV string"""
+    if not json_data:
+        return ""
+    
+    # Get all unique keys from all records to ensure complete headers
+    all_keys = set()
+    for record in json_data:
+        if isinstance(record, dict):
+            all_keys.update(record.keys())
+    
+    # Sort keys to ensure consistent column order, but put validation_flag at the end
+    headers = sorted([key for key in all_keys if key != 'validation_flag'])
+    if 'validation_flag' in all_keys:
+        headers.append('validation_flag')
+    
+    # Create CSV content
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    
+    # Write headers
+    writer.writerow(headers)
+    
+    # Write data rows
+    for record in json_data:
+        if isinstance(record, dict):
+            row = []
+            for header in headers:
+                value = record.get(header, '')
+                # Clean the value
+                if value is None or value == 'nan':
+                    value = ''
+                else:
+                    value = str(value).replace('\x00', '').strip()
+                row.append(value)
+            writer.writerow(row)
+    
+    return output.getvalue()
 
 @app.route('/update_record', methods=['POST'])
 def update_record():
